@@ -1,0 +1,16 @@
+kestra:
+  server-type: EXECUTOR
+  server:
+    service:
+      purge:
+        initial-delay: 10m
+        fixed-delay: 10m
+        interval: 10m
+  queue:
+    type: memory
+  repository:
+    type: memory
+  storage:
+    type: local
+    local:
+      base-path: /tmp/kestra-storage-test
