@@ -1,0 +1,25 @@
+version: "3"
+
+services:
+  kestra:
+    image: kestra/kestra:v1.3.39
+    container_name: kestra-test-maven
+    ports:
+      - "8081:8080"
+    environment:
+      KESTRA_CONFIGURATION: |
+        kestra:
+          queue:
+            type: memory
+          repository:
+            type: memory
+          storage:
+            type: local
+            local:
+              base-path: /app/storage
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /tmp/kestra-data:/app/storage
+    entrypoint: /bin/sh
+    command: >
+      -c "kestra plugins install io.github.sendhiloo7.kestra:plugin-ansible-runner:0.1.0 && kestra server standalone"

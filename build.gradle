@@ -133,9 +133,8 @@ mavenPublishing {
         }
         developers {
             developer {
-                id = 'kestra'
-                name = 'Kestra Team'
-                email = 'hello@kestra.io'
+                id = 'sendhiloo7'
+                name = 'Sendhil'
             }
         }
         scm {
