@@ -22,4 +22,4 @@ services:
       - /tmp/kestra-data:/app/storage
     entrypoint: /bin/sh
     command: >
-      -c "kestra plugins install io.github.sendhiloo7.kestra:plugin-ansible-runner:0.1.0 && kestra server standalone"
+      -c "kestra plugins install io.github.sendhiloo7.kestra:plugin-ansible-runner:0.1.2 && kestra server standalone"
