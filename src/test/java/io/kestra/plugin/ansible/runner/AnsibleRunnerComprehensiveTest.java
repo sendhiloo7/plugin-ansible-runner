@@ -480,7 +480,7 @@ public class AnsibleRunnerComprehensiveTest {
         AnsibleRunner.Output output = task.run(runContext);
         long dur = System.currentTimeMillis() - start;
 
-        Path cmdline = runContext.workingDir().path().resolve("runner/env/cmdline");
+        Path cmdline = runContext.workingDir().path().resolve("runner/env_backup/cmdline");
         String cmd = Files.readString(cmdline);
         assertThat(cmd, containsString("--check"));
         assertThat(cmd, containsString("--diff"));
@@ -512,7 +512,7 @@ public class AnsibleRunnerComprehensiveTest {
         AnsibleRunner.Output output = task.run(runContext);
         long dur = System.currentTimeMillis() - start;
 
-        Path cmdline = runContext.workingDir().path().resolve("runner/env/cmdline");
+        Path cmdline = runContext.workingDir().path().resolve("runner/env_backup/cmdline");
         String cmd = Files.readString(cmdline);
         assertThat(cmd, containsString("--limit app_servers:&east_coast"));
         assertThat(cmd, containsString("--tags deploy,patch"));
@@ -544,7 +544,7 @@ public class AnsibleRunnerComprehensiveTest {
         AnsibleRunner.Output output = task.run(runContext);
         long dur = System.currentTimeMillis() - start;
 
-        Path cmdline = runContext.workingDir().path().resolve("runner/env/cmdline");
+        Path cmdline = runContext.workingDir().path().resolve("runner/env_backup/cmdline");
         String cmd = Files.readString(cmdline);
         assertThat(cmd, containsString("-vvv"));
         assertThat(cmd, containsString("-f 30"));
@@ -582,14 +582,14 @@ public class AnsibleRunnerComprehensiveTest {
         AnsibleRunner.Output output = task.run(runContext);
         long dur = System.currentTimeMillis() - start;
 
-        Path extravars = runContext.workingDir().path().resolve("runner/env/extravars");
+        Path extravars = runContext.workingDir().path().resolve("runner/env_backup/extravars");
         assertTrue(Files.exists(extravars));
         String json = Files.readString(extravars);
         assertThat(json, containsString("\"env_name\":\"production\""));
         assertThat(json, containsString("\"max_connections\":1000"));
 
         recordResult("TC12", "Environment & Secrets", "Extra variables JSON serialization",
-            "env.extraVars={env_name: production, max_connections: 1000}", "Serialized to JSON in runner/env/extravars",
+            "env.extraVars={env_name: production, max_connections: 1000}", "Serialized to JSON in runner/env_backup/extravars",
             "PASS", output.getRc(), dur, "Verified JSON extra variables structure");
     }
 
@@ -620,13 +620,13 @@ public class AnsibleRunnerComprehensiveTest {
         AnsibleRunner.Output output = task.run(runContext);
         long dur = System.currentTimeMillis() - start;
 
-        Path envvars = runContext.workingDir().path().resolve("runner/env/envvars");
+        Path envvars = runContext.workingDir().path().resolve("runner/env_backup/envvars");
         assertTrue(Files.exists(envvars));
         String json = Files.readString(envvars);
         assertThat(json, containsString("ANSIBLE_HOST_KEY_CHECKING"));
 
         recordResult("TC13", "Environment & Secrets", "Environment variables JSON serialization",
-            "env.envVars={ANSIBLE_HOST_KEY_CHECKING: False}", "Written to runner/env/envvars",
+            "env.envVars={ANSIBLE_HOST_KEY_CHECKING: False}", "Written to runner/env_backup/envvars",
             "PASS", output.getRc(), dur, "Verified environment variables exported to env/envvars");
     }
 
@@ -652,14 +652,14 @@ public class AnsibleRunnerComprehensiveTest {
         AnsibleRunner.Output output = task.run(runContext);
         long dur = System.currentTimeMillis() - start;
 
-        Path passwords = runContext.workingDir().path().resolve("runner/env/passwords");
+        Path passwords = runContext.workingDir().path().resolve("runner/env_backup/passwords");
         assertTrue(Files.exists(passwords));
         String json = Files.readString(passwords);
         assertThat(json, containsString("vaultSuperSecret999"));
 
         recordResult("TC14", "Environment & Secrets", "Dynamic password rendering (Vault/Sudo)",
-            "env.passwords={vault_password: '{{ secretVault }}'}", "Dynamically evaluated and written to runner/env/passwords",
-            "PASS", output.getRc(), dur, "Pebble expressions evaluated; written to runner/env/passwords without leaking to CLI");
+            "env.passwords={vault_password: '{{ secretVault }}'}", "Dynamically evaluated and written to runner/env_backup/passwords",
+            "PASS", output.getRc(), dur, "Pebble expressions evaluated; written to runner/env_backup/passwords without leaking to CLI");
     }
 
     @Test
@@ -686,7 +686,7 @@ public class AnsibleRunnerComprehensiveTest {
         AnsibleRunner.Output output = task.run(runContext);
         long dur = System.currentTimeMillis() - start;
 
-        Path sshKeyFile = runContext.workingDir().path().resolve("runner/env/ssh_key");
+        Path sshKeyFile = runContext.workingDir().path().resolve("runner/env_backup/ssh_key");
         assertTrue(Files.exists(sshKeyFile));
         try {
             Set<?> perms = Files.getPosixFilePermissions(sshKeyFile);
@@ -697,7 +697,7 @@ public class AnsibleRunnerComprehensiveTest {
         }
 
         recordResult("TC15", "Environment & Secrets", "Private SSH key permission isolation (0600)",
-            "env.sshKey=-----BEGIN OPENSSH...", "runner/env/ssh_key written with chmod 0600",
+            "env.sshKey=-----BEGIN OPENSSH...", "runner/env_backup/ssh_key written with chmod 0600",
             "PASS", output.getRc(), dur, "Verified rw------- (0600) POSIX permissions");
     }
 
@@ -722,14 +722,14 @@ public class AnsibleRunnerComprehensiveTest {
         AnsibleRunner.Output output = task.run(runContext);
         long dur = System.currentTimeMillis() - start;
 
-        Path settings = runContext.workingDir().path().resolve("runner/env/settings");
+        Path settings = runContext.workingDir().path().resolve("runner/env_backup/settings");
         assertTrue(Files.exists(settings));
         String json = Files.readString(settings);
         assertThat(json, containsString("\"job_timeout\":900"));
         assertThat(json, containsString("\"idle_timeout\":180"));
 
         recordResult("TC16", "Engine Controls", "Execution and Idle timeouts in seconds",
-            "timeout=PT15M (900s), idleTimeout=PT3M (180s)", "runner/env/settings populated with job_timeout and idle_timeout",
+            "timeout=PT15M (900s), idleTimeout=PT3M (180s)", "runner/env_backup/settings populated with job_timeout and idle_timeout",
             "PASS", output.getRc(), dur, "Verified duration converted to seconds in settings JSON");
     }
 
@@ -790,7 +790,8 @@ public class AnsibleRunnerComprehensiveTest {
         Exception thrown = assertThrows(RuntimeException.class, () -> task.run(runContext));
         long dur = System.currentTimeMillis() - start;
 
-        assertThat(thrown.getMessage(), containsString("Ansible Runner failed with exit code 2"));
+        assertThat(thrown.getMessage(), containsString("Ansible Runner failed with status"));
+        assertThat(thrown.getMessage(), containsString("exit code 2"));
 
         recordResult("TC18", "Engine Controls", "failOnErrors=true hard failure exception",
             "failOnErrors=true, runner returns rc=2", "RuntimeException thrown with failed hosts list",
@@ -1178,7 +1179,7 @@ public class AnsibleRunnerComprehensiveTest {
                 .build();
 
             task.run(runContext);
-            Path cmdline = runContext.workingDir().path().resolve("runner/env/cmdline");
+            Path cmdline = runContext.workingDir().path().resolve("runner/env_backup/cmdline");
             assertTrue(Files.exists(cmdline));
             String cmd = Files.readString(cmdline).trim();
             assertThat(cmd, containsString(entry.getValue()));
@@ -1205,7 +1206,7 @@ public class AnsibleRunnerComprehensiveTest {
             .build();
 
         taskZero.run(runContextZero);
-        Path cmdlineZero = runContextZero.workingDir().path().resolve("runner/env/cmdline");
+        Path cmdlineZero = runContextZero.workingDir().path().resolve("runner/env_backup/cmdline");
         if (Files.exists(cmdlineZero)) {
             String cmd = Files.readString(cmdlineZero);
             assertFalse(cmd.contains("-v"), "Verbosity 0 must not produce any -v flags");
@@ -1282,6 +1283,13 @@ public class AnsibleRunnerComprehensiveTest {
             Path identArtifacts = runnerDir.resolve("artifacts").resolve(ident);
             Path jobEvents = identArtifacts.resolve("job_events");
             Files.createDirectories(jobEvents);
+
+            // Backup env dir for assertions since AnsibleRunner deletes it in finally block
+            Path envDir = runnerDir.resolve("env");
+            if (Files.exists(envDir)) {
+                Path envBackup = runnerDir.resolve("env_backup");
+                org.apache.commons.io.FileUtils.copyDirectory(envDir.toFile(), envBackup.toFile());
+            }
 
             if (simulateFailure) {
                 Files.writeString(identArtifacts.resolve("status"), "failed\n", StandardCharsets.UTF_8);

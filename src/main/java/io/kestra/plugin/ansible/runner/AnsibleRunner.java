@@ -29,6 +29,9 @@ import io.kestra.plugin.scripts.exec.scripts.runners.CommandsWrapper;
 import io.kestra.plugin.scripts.runner.docker.Docker;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotNull;
 import lombok.*;
 import lombok.experimental.SuperBuilder;
 import org.apache.commons.io.FileUtils;
@@ -79,7 +82,8 @@ public class AnsibleRunner extends Task implements
     InputFilesInterface,
     OutputFilesInterface {
 
-    private static final String DEFAULT_CONTAINER_IMAGE = "quay.io/ansible/ansible-runner:latest";
+    private static final String DEFAULT_CONTAINER_IMAGE = "quay.io/ansible/ansible-runner:stable-2.12-latest";
+    private static final java.util.regex.Pattern PKG_ALLOWLIST = java.util.regex.Pattern.compile("^[a-zA-Z0-9_.-]+$");
     private static final String DEFAULT_PLAYBOOK = "site.yml";
     private static final long DEFAULT_MAX_OUTPUTS_SIZE = 10 * 1024 * 1024L; // 10MB
     private static final long DEFAULT_MAX_LOG_LINES = 10_000L;
@@ -229,27 +233,34 @@ public class AnsibleRunner extends Task implements
     // --- Enterprise Execution Controls ---
     @Schema(title = "Dry-run check mode (--check)")
     @Builder.Default
+    @PluginProperty(group = "execution")
     private Property<Boolean> checkMode = Property.ofValue(false);
 
     @Schema(title = "Show line-by-line configuration diffs (--diff)")
     @Builder.Default
+    @PluginProperty(group = "execution")
     private Property<Boolean> diff = Property.ofValue(false);
 
     @Schema(title = "Limit execution to specific hosts or groups (--limit)")
+    @PluginProperty(group = "execution")
     private Property<String> limit;
 
     @Schema(title = "Tags to execute (--tags)")
+    @PluginProperty(group = "execution")
     private Property<List<String>> tags;
 
     @Schema(title = "Tags to bypass (--skip-tags)")
+    @PluginProperty(group = "execution")
     private Property<List<String>> skipTags;
 
     @Schema(title = "Verbosity level (0 to 4)")
     @Builder.Default
+    @PluginProperty(group = "execution")
     private Property<Integer> verbosity = Property.ofValue(0);
 
     @Schema(title = "Number of parallel forks")
     @Builder.Default
+    @PluginProperty(group = "execution")
     private Property<Integer> forks = Property.ofValue(5);
 
     // --- Project Contract (Defaults to site.yml with auto-locating) ---
@@ -287,17 +298,21 @@ public class AnsibleRunner extends Task implements
     private RunnerEnv env;
 
     @Schema(title = "Extra variables passed as JSON to /runner/env/extravars")
+    @PluginProperty(group = "execution")
     private Property<Map<String, Object>> extraVars;
 
     @Schema(title = "Environment variables for /runner/env/envvars")
+    @PluginProperty(group = "execution")
     private Property<Map<String, String>> envVars;
 
     @Schema(title = "Interactive prompt passwords for /runner/env/passwords")
     @PluginProperty(group = "connection", secret = true)
+    @ToString.Exclude
     private Property<Map<String, String>> passwords;
 
     @Schema(title = "Private SSH key for device authentication")
     @PluginProperty(group = "connection", secret = true)
+    @ToString.Exclude
     private Property<String> sshKey;
 
     // --- Engine Controls ---
@@ -313,7 +328,7 @@ public class AnsibleRunner extends Task implements
 
     @Schema(title = "Fail task if return code is non-zero (default false for programmatic downstream handling)")
     @Builder.Default
-    private Property<Boolean> failOnErrors = Property.ofValue(false);
+    private Property<Boolean> failOnErrors = Property.ofValue(true);
 
     @Override
     public NamespaceFiles getNamespaceFiles() {
@@ -375,7 +390,7 @@ public class AnsibleRunner extends Task implements
         // failOnErrors decide; otherwise (runner never started) propagate the real exit code.
         List<String> runnerCommand = List.of(
             "ansible-runner run ./runner -p " + resolvedPlaybook + " --ident " + ident
-                + "; __rc=$?; if [ -f ./runner/artifacts/" + ident + "/rc ]; then exit 0; else exit $__rc; fi"
+                + "; __rc=$?; if [ -f ./runner/artifacts/" + ident + "/rc ]; then if [ $__rc -eq 2 ] || [ $__rc -eq 4 ]; then exit 0; fi; fi; exit $__rc"
         );
 
         boolean shouldStreamLogs = runContext.render(this.streamLogs).as(Boolean.class).orElse(true);
@@ -432,11 +447,12 @@ public class AnsibleRunner extends Task implements
         try {
             scriptOutput = commandsWrapper.run();
         } catch (Exception e) {
-            logConsumer.close();
             Files.deleteIfExists(logSpoolFile);
             throw e;
+        } finally {
+            logConsumer.close();
+            FileUtils.deleteQuietly(envDir.toFile());
         }
-        logConsumer.close();
         int processExitCode = scriptOutput.getExitCode();
         Map<String, URI> extractedOutputFiles = scriptOutput.getOutputFiles();
 
@@ -464,7 +480,7 @@ public class AnsibleRunner extends Task implements
             consolidatedResults.put("stats", telemetry.stats);
             consolidatedResults.put("failedHosts", telemetry.failedHosts);
             consolidatedResults.put("failedTasks", telemetry.failedTasks);
-            consolidatedResults.put("tasks", telemetry.tasks);
+            // consolidatedResults.put("tasks", telemetry.tasks);
 
             Path resultsFile = workingDir.resolve("results-" + ident + ".json");
             Files.writeString(
@@ -521,8 +537,8 @@ public class AnsibleRunner extends Task implements
             .build();
 
         boolean failTask = runContext.render(this.failOnErrors).as(Boolean.class).orElse(false);
-        if (failTask && telemetry.rc != 0) {
-            throw new RuntimeException("Ansible Runner failed with exit code " + telemetry.rc +
+        if (failTask && !"successful".equalsIgnoreCase(telemetry.status)) {
+            throw new RuntimeException("Ansible Runner failed with status '" + telemetry.status + "' and exit code " + telemetry.rc +
                 " on hosts: " + telemetry.failedHosts);
         }
 
@@ -544,6 +560,11 @@ public class AnsibleRunner extends Task implements
             cmds.add("if [ -f ./runner/project/requirements.yml ]; then ansible-galaxy install -r ./runner/project/requirements.yml; elif [ -f requirements.yml ]; then ansible-galaxy install -r requirements.yml; fi");
         }
         if (!galaxyDeps.isEmpty()) {
+            for (String dep : galaxyDeps) {
+                if (!PKG_ALLOWLIST.matcher(dep).matches()) {
+                    throw new IllegalArgumentException("Invalid galaxy dependency: " + dep + ". Must match " + PKG_ALLOWLIST.pattern());
+                }
+            }
             cmds.add("ansible-galaxy collection install " + String.join(" ", galaxyDeps));
         }
 
@@ -554,6 +575,11 @@ public class AnsibleRunner extends Task implements
             cmds.add("if [ -f ./runner/project/requirements.txt ]; then pip install --no-cache-dir -r ./runner/project/requirements.txt; elif [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.txt; fi");
         }
         if (!pythonDeps.isEmpty()) {
+            for (String dep : pythonDeps) {
+                if (!PKG_ALLOWLIST.matcher(dep).matches()) {
+                    throw new IllegalArgumentException("Invalid python dependency: " + dep + ". Must match " + PKG_ALLOWLIST.pattern());
+                }
+            }
             cmds.add("pip install --no-cache-dir " + String.join(" ", pythonDeps));
         }
 
@@ -608,7 +634,7 @@ public class AnsibleRunner extends Task implements
                     } else if (sourceStr.endsWith(".tar.gz") || sourceStr.endsWith(".tgz")) {
                         ArchiveUtils.untarGz(is, projectDir);
                     } else {
-                        Files.copy(is, projectDir.resolve(playbookName), StandardCopyOption.REPLACE_EXISTING);
+                        Files.copy(is, secureResolve(projectDir, playbookName), StandardCopyOption.REPLACE_EXISTING);
                     }
                 }
             } else {
@@ -627,7 +653,7 @@ public class AnsibleRunner extends Task implements
                                 ArchiveUtils.untarGz(is, projectDir);
                             }
                         } else {
-                            Files.copy(localSource, projectDir.resolve(playbookName), StandardCopyOption.REPLACE_EXISTING);
+                            Files.copy(localSource, secureResolve(projectDir, playbookName), StandardCopyOption.REPLACE_EXISTING);
                         }
                     } else {
                         writePlaybookContent(projectDir, playbookName, sourceStr);
@@ -639,7 +665,7 @@ public class AnsibleRunner extends Task implements
         }
 
         // Auto-locate playbook in workingDir (e.g. from namespace files or current workspace)
-        Path targetPlaybook = projectDir.resolve(playbookName);
+        Path targetPlaybook = secureResolve(projectDir, playbookName);
         if (!Files.exists(targetPlaybook)) {
             Path directWorkingDirFile = workingDir.resolve(playbookName);
             Path playbooksSubDirFile = workingDir.resolve("playbooks").resolve(playbookName);
@@ -660,17 +686,8 @@ public class AnsibleRunner extends Task implements
             }
         }
 
-        // If playbook still not found, create default minimal ping playbook for zero-config runs
         if (!Files.exists(targetPlaybook)) {
-            writePlaybookContent(projectDir, playbookName, """
-                ---
-                - name: Auto-generated Zero Config Playbook
-                  hosts: all
-                  gather_facts: false
-                  tasks:
-                    - name: Ping target host
-                      ansible.builtin.ping:
-                """);
+            throw new IllegalArgumentException("Playbook not found: " + playbookName);
         }
 
         // If workingDir has a playbooks directory, copy its entire contents to projectDir
@@ -711,7 +728,7 @@ public class AnsibleRunner extends Task implements
                 );
                 if (!map.isEmpty() && map.keySet().stream().anyMatch(k -> k.endsWith(".yml") || k.endsWith(".yaml") || k.contains("/"))) {
                     for (Map.Entry<String, Object> entry : map.entrySet()) {
-                        Path target = projectDir.resolve(entry.getKey());
+                        Path target = secureResolve(projectDir, entry.getKey());
                         if (target.getParent() != null) {
                             Files.createDirectories(target.getParent());
                         }
@@ -729,7 +746,7 @@ public class AnsibleRunner extends Task implements
                 sanitized = sanitized.replaceFirst("^----+", "---");
             }
         }
-        Files.writeString(projectDir.resolve(playbookName), sanitized + "\n", StandardCharsets.UTF_8);
+        Files.writeString(secureResolve(projectDir, playbookName), sanitized + "\n", StandardCharsets.UTF_8);
     }
 
     private void resolveInventory(RunContext runContext, Path workingDir, Path inventoryDir) throws Exception {
@@ -886,8 +903,7 @@ public class AnsibleRunner extends Task implements
             }
         }
 
-        // 8. Default localhost inventory fallback for container execution
-        Files.writeString(inventoryDir.resolve("hosts"), "localhost ansible_connection=local\n", StandardCharsets.UTF_8);
+        // No default inventory fallback. Ansible will fail if none provided and not implicit.
     }
 
     private void makeExecutable(Path path) {
@@ -913,28 +929,38 @@ public class AnsibleRunner extends Task implements
         }
         String renderedLimit = runContext.render(this.limit).as(String.class).orElse(null);
         if (renderedLimit != null && !renderedLimit.isBlank()) {
+            validateCmdlineArg(renderedLimit);
             cmdArgs.add("--limit");
             cmdArgs.add(renderedLimit);
         }
         List<String> renderedTags = runContext.render(this.tags).asList(String.class);
         if (!renderedTags.isEmpty()) {
+            for (String t : renderedTags) validateCmdlineArg(t);
             cmdArgs.add("--tags");
             cmdArgs.add(String.join(",", renderedTags));
         }
         List<String> renderedSkipTags = runContext.render(this.skipTags).asList(String.class);
         if (!renderedSkipTags.isEmpty()) {
+            for (String t : renderedSkipTags) validateCmdlineArg(t);
             cmdArgs.add("--skip-tags");
             cmdArgs.add(String.join(",", renderedSkipTags));
         }
         Integer rForks = runContext.render(this.forks).as(Integer.class).orElse(5);
-        if (rForks != null && rForks > 0) {
+        if (rForks != null) {
+            if (rForks < 1) {
+                throw new IllegalArgumentException("forks must be greater than or equal to 1");
+            }
             cmdArgs.add("-f");
             cmdArgs.add(String.valueOf(rForks));
         }
         Integer rVerbosity = runContext.render(this.verbosity).as(Integer.class).orElse(0);
-        if (rVerbosity != null && rVerbosity > 0) {
-            int level = Math.min(4, Math.max(1, rVerbosity));
-            cmdArgs.add("-" + "v".repeat(level));
+        if (rVerbosity != null) {
+            if (rVerbosity < 0 || rVerbosity > 4) {
+                throw new IllegalArgumentException("verbosity must be between 0 and 4");
+            }
+            if (rVerbosity > 0) {
+                cmdArgs.add("-" + "v".repeat(rVerbosity));
+            }
         }
         if (!cmdArgs.isEmpty()) {
             Files.writeString(envDir.resolve("cmdline"), String.join(" ", cmdArgs) + "\n", StandardCharsets.UTF_8);
@@ -1031,7 +1057,7 @@ public class AnsibleRunner extends Task implements
         int rc = processExitCode;
         List<String> failedHosts = new ArrayList<>();
         List<Map<String, Object>> failedTasks = new ArrayList<>();
-        List<Map<String, Object>> tasks = new ArrayList<>();
+        // tasks list removed to prevent memory exhaustion
         Map<String, Object> stats = new HashMap<>();
         RunnerSummary.RunnerSummaryBuilder summaryBuilder = RunnerSummary.builder()
             .ok(0)
@@ -1078,7 +1104,7 @@ public class AnsibleRunner extends Task implements
 
                             if ("runner_on_failed".equals(event) || "runner_on_unreachable".equals(event)) {
                                 if (!host.isBlank() && !failedHosts.contains(host)) {
-                                    failedHosts.add(host);
+                                    if (failedHosts.size() < 100) failedHosts.add(host);
                                 }
                                 Map<String, Object> failedTask = new LinkedHashMap<>();
                                 failedTask.put("host", host);
@@ -1100,7 +1126,7 @@ public class AnsibleRunner extends Task implements
                                 if (eventData.has("duration")) {
                                     taskRecord.put("duration", eventData.path("duration").asDouble());
                                 }
-                                tasks.add(taskRecord);
+                                // tasks.add(taskRecord); // omitted from memory
                             }
 
                             if ("playbook_on_stats".equals(event)) {
@@ -1140,7 +1166,7 @@ public class AnsibleRunner extends Task implements
                                     stats.put(h, hStat);
 
                                     if ((failuresNode.path(h).asInt(0) > 0 || unreachableNode.path(h).asInt(0) > 0) && !failedHosts.contains(h)) {
-                                        failedHosts.add(h);
+                                        if (failedHosts.size() < 100) failedHosts.add(h);
                                     }
                                 }
                             }
@@ -1150,7 +1176,22 @@ public class AnsibleRunner extends Task implements
             }
         }
 
-        return new ExecutionTelemetry(status, rc, failedHosts, stats, summaryBuilder.build(), failedTasks, tasks);
+        return new ExecutionTelemetry(status, rc, failedHosts, stats, summaryBuilder.build(), failedTasks);
+    }
+
+
+    private void validateCmdlineArg(String arg) {
+        if (arg.matches(".*\\s.*") || arg.startsWith("-")) {
+            throw new IllegalArgumentException("Invalid cmdline argument: '" + arg + "'. Cannot contain whitespace or start with '-'.");
+        }
+    }
+
+    private Path secureResolve(Path base, String userPath) {
+        Path resolved = base.resolve(userPath).normalize();
+        if (!resolved.startsWith(base.normalize())) {
+            throw new IllegalArgumentException("Path traversal blocked: " + userPath + " escapes the base directory.");
+        }
+        return resolved;
     }
 
     private int sumJsonNode(JsonNode node) {
@@ -1179,8 +1220,7 @@ public class AnsibleRunner extends Task implements
         List<String> failedHosts,
         Map<String, Object> stats,
         RunnerSummary summary,
-        List<Map<String, Object>> failedTasks,
-        List<Map<String, Object>> tasks
+        List<Map<String, Object>> failedTasks
     ) {}
 
     @Builder

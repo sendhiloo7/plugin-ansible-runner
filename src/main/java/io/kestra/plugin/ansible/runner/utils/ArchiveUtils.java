@@ -14,6 +14,9 @@ import java.util.zip.ZipOutputStream;
 
 public class ArchiveUtils {
 
+    private static final int MAX_ENTRIES = 10_000;
+    private static final long MAX_UNCOMPRESSED_BYTES = 100 * 1024 * 1024L; // 100MB
+
     /**
      * Recursively compresses a source directory into a zip archive.
      */
@@ -63,7 +66,13 @@ public class ArchiveUtils {
         Files.createDirectories(targetDir);
         try (ZipInputStream zis = new ZipInputStream(new BufferedInputStream(inputStream))) {
             ZipEntry entry;
+            int entryCount = 0;
+            long totalBytes = 0;
             while ((entry = zis.getNextEntry()) != null) {
+                entryCount++;
+                if (entryCount > MAX_ENTRIES) {
+                    throw new IOException("Archive contains too many entries (exceeds " + MAX_ENTRIES + ").");
+                }
                 Path resolvedPath = targetDir.resolve(entry.getName()).normalize();
                 if (!resolvedPath.startsWith(targetDir)) {
                     throw new IOException("Zip slip security exception: " + entry.getName());
@@ -76,7 +85,15 @@ public class ArchiveUtils {
                         Files.createDirectories(resolvedPath.getParent());
                     }
                     try (OutputStream os = new BufferedOutputStream(Files.newOutputStream(resolvedPath))) {
-                        IOUtils.copy(zis, os);
+                        byte[] buffer = new byte[8192];
+                        int read;
+                        while ((read = zis.read(buffer)) != -1) {
+                            totalBytes += read;
+                            if (totalBytes > MAX_UNCOMPRESSED_BYTES) {
+                                throw new IOException("Archive uncompressed size exceeds limit of " + MAX_UNCOMPRESSED_BYTES + " bytes.");
+                            }
+                            os.write(buffer, 0, read);
+                        }
                     }
                 }
                 zis.closeEntry();
@@ -92,7 +109,18 @@ public class ArchiveUtils {
         try (GzipCompressorInputStream gzis = new GzipCompressorInputStream(new BufferedInputStream(inputStream));
              TarArchiveInputStream tais = new TarArchiveInputStream(gzis)) {
             TarArchiveEntry entry;
+            int entryCount = 0;
+            long totalBytes = 0;
             while ((entry = tais.getNextTarEntry()) != null) {
+                entryCount++;
+                if (entryCount > MAX_ENTRIES) {
+                    throw new IOException("Archive contains too many entries (exceeds " + MAX_ENTRIES + ").");
+                }
+                
+                if (entry.isSymbolicLink() || entry.isLink()) {
+                    throw new IOException("Symlinks and hard-links are not allowed in archives.");
+                }
+
                 Path resolvedPath = targetDir.resolve(entry.getName()).normalize();
                 if (!resolvedPath.startsWith(targetDir)) {
                     throw new IOException("Tar slip security exception: " + entry.getName());
@@ -105,7 +133,15 @@ public class ArchiveUtils {
                         Files.createDirectories(resolvedPath.getParent());
                     }
                     try (OutputStream os = new BufferedOutputStream(Files.newOutputStream(resolvedPath))) {
-                        IOUtils.copy(tais, os);
+                        byte[] buffer = new byte[8192];
+                        int read;
+                        while ((read = tais.read(buffer)) != -1) {
+                            totalBytes += read;
+                            if (totalBytes > MAX_UNCOMPRESSED_BYTES) {
+                                throw new IOException("Archive uncompressed size exceeds limit of " + MAX_UNCOMPRESSED_BYTES + " bytes.");
+                            }
+                            os.write(buffer, 0, read);
+                        }
                     }
                 }
             }

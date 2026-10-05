@@ -30,6 +30,7 @@ public class RunnerEnv {
         description = "Mapping of prompt regex/strings to passwords for Vault, sudo, Cisco enable secrets, etc."
     )
     @PluginProperty(group = "connection", secret = true)
+    @ToString.Exclude
     private Property<Map<String, String>> passwords;
 
     @Schema(
@@ -37,5 +38,6 @@ public class RunnerEnv {
         description = "Private SSH key securely written to /runner/env/ssh_key with 0600 file permissions."
     )
     @PluginProperty(group = "connection", secret = true)
+    @ToString.Exclude
     private Property<String> sshKey;
 }
