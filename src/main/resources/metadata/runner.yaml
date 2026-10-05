@@ -1,0 +1,5 @@
+name: ansible-runner
+title: Ansible Runner
+group: io.kestra.plugin.ansible.runner
+description: Enterprise-grade Ansible playbook orchestration using containerized Execution Environments and structured JSON telemetry.
+body: ""
